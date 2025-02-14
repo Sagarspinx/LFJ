@@ -11,16 +11,15 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.openqa.selenium.chrome.ChromeOptions;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.Map;
-import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-public class BlogsVerification {
+public class BlogsParagraph {
     public static void main(String[] args) {
         // Setup WebDriver with options
         WebDriverManager.chromedriver().setup();
@@ -30,30 +29,44 @@ public class BlogsVerification {
         driver.manage().timeouts().implicitlyWait(10, TimeUnit.SECONDS);
         driver.manage().window().maximize();
 
-        // Define multiple URLs with XPaths for extracting content from Live site
-        Map<String, String[]> urls = new HashMap<>();
-        urls.put("https://staging.mrjustice.com/blog/t-bone-accident-whos-at-fault/", new String[]{"//*[@class='article-wrap']//p", "https://php2.spinxweb.net/lawyers-for-justice/t-bone-accident-whos-at-fault/"});
-        urls.put("https://staging.mrjustice.com/blog/california-contributory-negligence-law/", new String[]{"//*[@class='article-wrap']//p", "https://php2.spinxweb.net/california-contributory-negligence-law/"});
-        urls.put("https://staging.mrjustice.com/blog/car-accident-lawsuit-process/", new String[]{"//*[@class='article-wrap']//p", "https://php2.spinxweb.net/lawyers-for-justice/car-accident-lawsuit-process/"});
-
+        // Read URLs from Excel file
+        List<String[]> urls = readExcelData(".//Excel//Blogs.xlsx");
         List<String[]> reportData = new ArrayList<>();
         reportData.add(new String[]{"Live URL", "Dev URL", "Live Paragraph", "Status"});
 
-        for (Map.Entry<String, String[]> entry : urls.entrySet()) {
-            String liveUrl = entry.getKey();
-            String liveXPath = entry.getValue()[0];
-            String devUrl = entry.getValue()[1];
+        for (String[] urlPair : urls) {
+            String liveUrl = urlPair[0];
+            String devUrl = urlPair[1];
 
             System.out.println("\n🔎 Checking paragraphs from Live: " + liveUrl + " on Dev: " + devUrl);
-            List<String> liveParagraphs = extractParagraphs(driver, liveUrl, liveXPath);
+            //Update live path incase for other project
+            List<String> liveParagraphs = extractParagraphs(driver, liveUrl, "//*[@class='article-wrap']//p");
             checkParagraphsInDev(driver, devUrl, liveParagraphs, liveUrl, reportData);
         }
 
         // Save results to Excel
         saveResultsToExcel(reportData);
-
-        // Close browser
         driver.quit();
+    }
+
+    // Read Live and Dev URLs from Excel
+    public static List<String[]> readExcelData(String filePath) {
+        List<String[]> urlPairs = new ArrayList<>();
+        try (FileInputStream fis = new FileInputStream(new File(filePath));
+             Workbook workbook = new XSSFWorkbook(fis)) {
+            Sheet sheet = workbook.getSheetAt(0);
+            for (Row row : sheet) {
+                if (row.getRowNum() == 0) continue; // Skip header
+                Cell liveUrlCell = row.getCell(0);
+                Cell devUrlCell = row.getCell(1);
+                if (liveUrlCell != null && devUrlCell != null) {
+                    urlPairs.add(new String[]{liveUrlCell.getStringCellValue(), devUrlCell.getStringCellValue()});
+                }
+            }
+        } catch (IOException e) {
+            System.out.println("⚠️ Error reading Excel file: " + e.getMessage());
+        }
+        return urlPairs;
     }
 
     // Extract all paragraphs from Live site based on the provided XPath
@@ -61,15 +74,15 @@ public class BlogsVerification {
         driver.get(url);
         List<WebElement> paragraphs = driver.findElements(By.xpath(xpath));
         return paragraphs.stream()
-                .map(WebElement::getText)  // Get text content
-                .map(BlogsVerification::cleanText)  // Normalize text
+                .map(WebElement::getText)
+                .map(BlogsParagraph::cleanText)
                 .collect(java.util.stream.Collectors.toList());
     }
 
     // Check if each paragraph from Live exists anywhere on the Dev page and store results
     public static void checkParagraphsInDev(WebDriver driver, String devUrl, List<String> liveParagraphs, String liveUrl, List<String[]> reportData) {
         driver.get(devUrl);
-        String devPageText = cleanText(driver.getPageSource()); // Get full page text
+        String devPageText = cleanText(driver.getPageSource());
 
         for (String liveParagraph : liveParagraphs) {
             if (devPageText.contains(liveParagraph)) {
@@ -79,7 +92,6 @@ public class BlogsVerification {
                 System.out.println("❌ Paragraph from Live NOT found in Dev:");
                 System.out.println("   Missing Paragraph: " + liveParagraph);
                 reportData.add(new String[]{liveUrl, devUrl, liveParagraph, "Not Found"});
-                System.out.println("🔹 Debug: Adding row - " + Arrays.toString(new String[]{liveUrl, devUrl, liveParagraph, "Not Found"}));
             }
         }
     }
@@ -93,7 +105,7 @@ public class BlogsVerification {
 
     // Save results to an Excel file
     public static void saveResultsToExcel(List<String[]> data) {
-        if (data.size() <= 1) { // Only headers exist, no actual data
+        if (data.size() <= 1) {
             System.out.println("⚠️ No data to write in the Excel file. Check if paragraphs are being found.");
             return;
         }
@@ -109,7 +121,6 @@ public class BlogsVerification {
                 }
             }
 
-            // Ensure file exists before saving
             File file = new File(".//Excel//BlogVerificationReport.xlsx");
             try (FileOutputStream fileOut = new FileOutputStream(file)) {
                 workbook.write(fileOut);
